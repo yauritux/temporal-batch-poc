@@ -15,13 +15,13 @@ async function run() {
     const worker = await Worker.create({
       connection,
       namespace: 'default',
-      taskQueue: 'hello-world',
+      taskQueue: 'batch-task',
       // Workflows are registered using a path as they run in a separate JS context.
-      workflowsPath: require.resolve('./workflows'),
+      workflowsPath: require.resolve('./workflows/batch'),
       activities,
     });
 
-    // Step 3: Start accepting tasks on the `hello-world` queue
+    // Step 3: Start accepting tasks on the `batch-task` queue
     //
     // The worker runs until it encounters an unexpected error or the process receives a shutdown signal registered on
     // the SDK Runtime object.

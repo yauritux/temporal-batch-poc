@@ -2,7 +2,7 @@
 
 This project is a **Temporal** proof‑of‑concept that:
 
-- Reads a CSV of users.
+- Reads a CSV of users (dummy-data/users.csv). I generated this file with 1000 users using [this](https://mockaroo.com/?spm=a2ty_o01.29997173.0.0.606ec921SiarAB) tool.
 - Chunks the records.
 - Calls a mock HTTP enrichment API for each user.
 - Saves enriched chunks to JSON files under `/tmp`.

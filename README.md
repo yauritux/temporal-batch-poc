@@ -8,6 +8,9 @@ This project is a **Temporal** proof‑of‑concept that:
 - Saves enriched chunks to JSON files under `/tmp`.
 - Uses **child workflows**, **activities**, **retries**, and **heartbeats**.
 
+For detailed design notes and lessons learned, see
+[docs/temporal-batch-best-practices.md](docs/temporal-batch-best-practices.md).
+
 ---
 
 ## Project structure

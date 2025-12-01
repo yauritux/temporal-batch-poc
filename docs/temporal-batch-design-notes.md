@@ -163,6 +163,10 @@ Some natural next steps this POC suggests:
 - Use **Temporal Web** or CLI to:
   - Inspect workflow histories.
   - Verify heartbeats, retries, and failure reasons.
+- Add another use case to the POC, for example:
+  - Data pipeline / ETL style batch job with multiple steps
+  - Bulk payouts / mass payments
+  - Payroll processing
 
 These will help validate and evolve batch logic safely as you scale up.
 

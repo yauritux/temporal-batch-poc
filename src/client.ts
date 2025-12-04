@@ -1,6 +1,7 @@
 import { Connection, Client } from '@temporalio/client';
 import { loadClientConnectConfig } from '@temporalio/envconfig';
-import { batchWorkflow } from './workflows/batch';
+// import { batchWorkflow } from './workflows/batch';
+import { cursorBatchWorkflow } from './workflows/batch';
 import { nanoid } from 'nanoid';
 
 async function run() {
@@ -8,12 +9,13 @@ async function run() {
   const connection = await Connection.connect(config.connectionOptions);
   const client = new Client({ connection });
 
-  const handle = await client.workflow.start(batchWorkflow, {
+  const handle = await client.workflow.start(cursorBatchWorkflow, {
     taskQueue: 'batch-task',
     args: [
       {
         csvPath: 'dummy-data/users.csv',
-        chunkSize: 100,
+        pageSize: 100,
+        // chunkSize: 100,
       },
     ],
     workflowId: 'batch-' + nanoid(),

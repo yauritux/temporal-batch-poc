@@ -17,7 +17,7 @@ async function run() {
       namespace: 'default',
       taskQueue: 'batch-task',
       // Workflows are registered using a path as they run in a separate JS context.
-      workflowsPath: require.resolve('./workflows/batch'),
+      workflowsPath: require.resolve('./workflows'),
       activities,
     });
 

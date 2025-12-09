@@ -18,26 +18,39 @@ For detailed design notes and lessons learned, see
 Key files:
 
 - `src/worker.ts`  
-  Temporal worker. Registers workflows and activities and polls the `batch-task` queue.
+  Temporal worker. Registers workflows and activities and polls the `batch-task` queue. Uses `workflowsPath: require.resolve('./workflows')` to load all workflows exported from [ `src/workflows/index.ts` ]
 
 - `src/client.ts`  
-  CLI client that starts the `batchWorkflow` with a given CSV path and chunk size.
+  CLI client that starts either:
+  - [batchWorkflow](`src/workflows/batch_all_in_memory.ts`)
+  - [cursorBatchWorkflow](`src/workflows/batch_cursor_based.ts`)
+  depending on the CLI argument (i.e., `in-memory` or `cursor`)
 
-- `src/workflows/batch.ts`  
-  Main workflow logic:
-  - `batchWorkflow` – top-level workflow.
+- `src/workflows/batch_all_in_memory.ts`
+  "Pattern A - all-in-memory" workflow:
+  - `batchWorkflow` - top level workflow.
   - `loadChunksWorkflow` – child workflow that orchestrates CSV loading.
   - Uses activities `loadCsvChunks`, `enrichChunk`, `saveChunk`.
+  - Load all chunks into memory / workflow history at once (simple, but not scalable).
+
+- `src/workflows/batch_cursor_based.ts`
+  "Pattern B - cursor-based" workflow:
+  - `cursorBatchWorkflow` - top level workflow.
+  - Uses activity `loadNextCsvPage` to fetch one page at a time using a cursor.
+  - Uses activities `enrichChunk`, `saveChunk`.
+  - Keeps workflow history small and works better for large datasets.
+
+- `src/workflows/index.ts`
+  Barrel file exporting all workflows:
 
 - `src/activities/load.ts`  
-  Activity `loadCsvChunks`:
-  - Reads the CSV from disk.
-  - Parses it into `User` objects.
-  - Splits into `User[][]` chunks.
+  Activities for loading data:
+  - `loadCsvChunks` - reads full CSV, parses to `User[]`, splits into `User[][]`.
+  - `loadNextCsvPage` - CSV paging with a cursor (`start index`, `pageSize`).
 
 - `src/activities/enrich.ts`  
   Activity `enrichChunk`:
-  - Iterates through a chunk of users.
+  - Iterates through a chunk/page of users.
   - Calls the mock API `POST /enrich`.
   - Uses `heartbeat()` to report progress.
   - On API failure:
@@ -58,7 +71,7 @@ Key files:
   `User` type and CSV chunking helpers (used by activities).
 
 - `dummy-data/users.csv`  
-  Sample users to drive the batch workflow.
+  Sample users to drive the batch workflow (1000 rows generated via Mockaroo).
 
 ---
 
@@ -108,4 +121,9 @@ npm run api
 
 ```bash
 npm run workflow
+```
+By default, this runs the **cursor-based workflow**. You can also run the **all-in-memory workflow** by passing the `in-memory` argument:
+
+```bash
+npm run workflow -- in-memory
 ```

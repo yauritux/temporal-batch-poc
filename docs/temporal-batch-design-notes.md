@@ -4,16 +4,45 @@
 
 This POC surfaced a few useful patterns and pitfalls when building batch workflows with Temporal.
 
+### Patterns in this POC
+
+This POC intentionally implements **two** batch patterns:
+
+- **Pattern A - all-in-memory batch**
+  - Workflow: [`batchWorkflow`](../src/workflows/batch_all_in_memory.ts)
+  - Behavior:
+    - Uses activity `loadCsvChunks` to load and chunk the **entire dataset** (CSV) upfront.
+    - The workflow then fans out child workflows `loadChunksWorkflow`.
+  - Trade-offs:
+    - Simple and easy to understand.
+    - For large datasets, the complete `User[][]` ends up in workflow history → **large histories, slower replay, potential size limits**.
+
+- **Pattern B - Cursor-based batch**
+  - Workflow: [`cursorBatchWorkflow`](../src/workflows/batch_cursor_based.ts)
+  - Behavior:
+    - Uses activity `loadNextCsvPage(csvPath, cursor, pageSize)` to fetch **one page at a time**.
+    - Workflow keeps only:
+      - Current `cursor` (e.g., starting index).
+      - Current page `items: User[]`.
+    - Calls `enrichChunk` and `saveChunk` per page.
+  - Trade-offs:
+    - More boilerplate, but **scales better** to large datasets.
+    - Workflow history remains small; You never materialize the full dataset in memory at once.
+
 ### 1. Workflows orchestrate, activities do the work
 
 - **Best practice**
   - Keep workflows **pure and deterministic**.
   - Put I/O, CPU‑heavy work, and non‑deterministic logic (HTTP calls, file access, randomness) in **activities**, not workflows.
 - **What we did**
-  - [batchWorkflow](../src/workflows/batch.ts) and [loadChunksWorkflow](../src/workflows/batch.ts) only orchestrate:
-    - Child workflows
-    - Activities ([loadCsvChunks](../src/activities/load.ts), [enrichChunk](../src/activities/enrich.ts), [saveChunk](../src/activities/save.ts))
-  - CSV reading and parsing is in the [loadCsvChunks](../src/activities/load.ts) **activity**, not in workflow code.
+  - In the **all-in-memory** pattern:
+    - [batchWorkflow](../src/workflows/batch-all-in-memory.ts) and [loadChunksWorkflow](../src/workflows/batch-all-in-memory.ts) only orchestrate:
+      - Child workflows
+      - Activities ([loadCsvChunks](../src/activities/load.ts), [enrichChunk](../src/activities/enrich.ts), [saveChunk](../src/activities/save.ts))
+      - CSV reading and parsing is in the [loadCsvChunks](../src/activities/load.ts) **activity**, not in workflow code.
+  - In the **cursor-based** pattern:
+    - [cursorBatchWorkflow](../src/workflows/batch_cursor_based.ts) orchestrates paging via the `loadNextCsvPage` activity and then calls `enrichChunk` and `saveChunk` for each page.
+  - CSV reading and parsing is in the `loadCsvChunks` / `loadNextCsvPage` **activities**, not in the workflow code.
 - **Anti‑pattern to avoid**
   - Opening files or calling HTTP directly in a workflow function. This breaks determinism and makes replay unreliable.
 
@@ -26,12 +55,32 @@ This POC surfaced a few useful patterns and pitfalls when building batch workflo
     - Better visibility in Temporal Web (each child has its own history).
     - Better failure isolation and retry behavior.
 - **What we did**
-  - [batchWorkflow](../src/workflows/batch.ts):
-    - Starts a child [loadChunksWorkflow](../src/workflows/batch.ts) to handle CSV loading and chunking.
-    - For each chunk, starts a child [enrichAndSaveWorkflow](../src/workflows/batch.ts).
-  - Each [enrichAndSaveWorkflow](../src/workflows/batch.ts) then runs [enrichChunk](../src/activities/enrich.ts) + [saveChunk](../src/activities/save.ts).
+  - In the **all-in-memory** pattern:  
+    - [batchWorkflow](../src/workflows/batch_all_in_memory.ts):
+      - Starts a child [loadChunksWorkflow](../src/workflows/batch_all_in_memory.ts) to handle CSV loading and chunking.
+      - For each chunk, starts a child [enrichAndSaveWorkflow](../src/workflows/batch_all_in_memory.ts).
+    - Each [enrichAndSaveWorkflow](../src/workflows/batch.ts) then runs [enrichChunk](../src/activities/enrich.ts) + [saveChunk](../src/activities/save.ts).
+  - In the **cursor-based** pattern:
+    - [cursorBatchWorkflow](../src/workflows/batch_cursor_based.ts) does not create additional child workflows per chunk in this POC; instead it:
+      - Iterates in a loop, calling the `loadNextCsvPage` activity to fetch the next page.
+      - For each page, calls `enrichChunk` and `saveChunk` directly for each page.
+    - This still follows the same principle: workflows orchestrate pages/chunks; activites perform I/O and enrichment.
+    - We don't use child workflows in this POC since the main goal is to keep workflow history small by paging through data via `loadNextCsvPage`. For many use cases, a single workflow with a loop + activities is sufficient.
+    - However, you might combine both patterns (i.e., add child workflows to a cursor pattern) when you also want:
+      - **Per-page child workflows** for observability and isolation, e.g.,:
+      ```typescript
+      for each page:
+        executeChild(processPageWorkflow, args=[cursor, pageItems])
+      ```
+      - **Different retry semantics per page**
+      - **Cross-team ownership**. E.g., Parent owns orchestration, children own "process this page / this merchant / this region".
 - **Anti‑pattern to avoid**
-  - Doing an entire large batch in a single workflow run with a giant loop. You lose granularity in retries and observability and risk history limits.
+  - Doing an entire large batch in a single workflow run with a giant loop that:
+    - Loads *all* items into memory inside the workflow, or
+    - Iterates over thousands of items without any paging or chunking.
+    This leads to very large histories, slow replay, and possibly hitting history limits.
+  - Using child workflows or activities that each still process an unbounded amount of data.
+  Child workflows help with isolation/visibility, but they do not fix scalability if each child still loads "everything at once". Combine child workflows with **chunking or cursor-based paging**.
 
 ---
 
@@ -145,29 +194,10 @@ This POC surfaced a few useful patterns and pitfalls when building batch workflo
   - Export every workflow function actually used by the worker:
     - If a child workflow isn’t exported from the workflow bundle, Temporal cannot run it.
 - **What we hit**
-  - [loadChunksWorkflow](../src/workflows/batch.ts) initially not exported → `no such function is exported by the workflow bundle`.
+  - [loadChunksWorkflow](../src/workflows/batch_all_in_memory.ts) initially not exported → `no such function is exported by the workflow bundle`.
   - Activity type mismatches in `proxyActivities` (e.g. using [loadCsvChunks](../src/activities/load.ts) without declaring it in the type).
 - **Anti‑pattern to avoid**
   - Relying on `as any` / forced casts around activities and workflows.
   - Forgetting to export workflows used with `executeChild`.
-
----
-
-### 9. Testing & observability (future improvements)
-
-Some natural next steps this POC suggests:
-
-- Add **unit tests** for:
-  - [loadCsvChunks](../src/activities/load.ts) (correct chunking & parsing).
-  - [enrichChunk](../src/activities/enrich.ts) (happy path vs. failure path).
-- Use **Temporal Web** or CLI to:
-  - Inspect workflow histories.
-  - Verify heartbeats, retries, and failure reasons.
-- Add another use case to the POC, for example:
-  - Data pipeline / ETL style batch job with multiple steps
-  - Bulk payouts / mass payments
-  - Payroll processing
-
-These will help validate and evolve batch logic safely as you scale up.
 
 ---
